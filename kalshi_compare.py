@@ -15,13 +15,12 @@ from rich.table import Table
 from kalshi.client import KalshiClient
 from kalshi.monitor import KalshiWebSocket
 from src.config import Config, MarketState, YIELD_BUCKETS
-from src.utils.math import price_to_yield
 from src.utils.opt_chain import generate_symbol_map, calculate_underlying_from_parity
 from src.table_display import run_model
 
 console = Console()
 
-EVENT_TICKER = "KXTNOTED-25DEC31"
+EVENT_TICKER = "KXTNOTED-25DEC12"
 MIN_EDGE_PCT = 0.3
 MIN_SPREAD_CENTS = 3
 MAX_BID = 90
@@ -96,7 +95,9 @@ def calculate_quote(prob: float) -> tuple[int, int]:
 
 
 def display_comparison(model_probs: dict, kalshi_data: dict):
+    
     table = Table(title=f"Model vs Kalshi: {EVENT_TICKER}", show_header=True, header_style="bold cyan")
+    
     table.add_column("Bucket", justify="left")
     table.add_column("Model", justify="right", style="yellow")
     table.add_column("Fair", justify="right")
@@ -128,6 +129,7 @@ def display_comparison(model_probs: dict, kalshi_data: dict):
 
 
 async def main():
+    
     csv_path = sys.argv[1] if len(sys.argv) > 1 else None
     yield_10y = float(sys.argv[2]) if len(sys.argv) > 2 else 4.20
     

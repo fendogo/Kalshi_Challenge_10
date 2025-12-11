@@ -76,7 +76,7 @@ def run_model(config, strikes, symbol_map, state, y10_yield=0.0):
     pdf = extract_pdf(call_prices, config.increment, rate=r, time_to_expiry=T)
     
     tn_yield = price_to_yield(mid)
-    correction = y10_yield - tn_yield if y10_yield > 0 else 0.0
+    correction = 0.01
     
     bucket_probs = calculate_yield_bucket_probs(pdf, correction, config, h=config.increment)
     

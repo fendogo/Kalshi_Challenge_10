@@ -2,5 +2,9 @@ numpy
 scipy
 matplotlib
 rich
+humanize
 python-dotenv
 schwab-py
+aiohttp
+websockets
+cryptography

@@ -73,12 +73,12 @@ def run_snapshot(csv_path: str, yield_10y: float = 0.0, plot_path: str = None):
 
     header_text = (f"[bold cyan]Snapshot: {csv_path}[/bold cyan]  |  "
                    f"[green]Underlying:[/green] {underlying:.4f} ({underlying_yield:.3f}%)  |  "
-                   f"[green]Strikes:[/green] {len(strikes)} ({strikes[0]:.2f} - {strikes[-1]:.2f})")
+                   f"[green]/TN Adj:[/green] +1bp")
     
     renderables = build_renderables(config, result, header_text, show_stats=False)
     console.print(renderables)
 
-    # Save plots to project root (parent of data folder)
+    # save plots to project root 
     project_root = Path(__file__).parent
     vol_path = plot_path or str(project_root / 'vol_fit.png')
     pdf_path = str(project_root / 'pdf_fit.png')
