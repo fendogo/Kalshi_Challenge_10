@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import csv
+import math
 import sys
 import asyncio
 from pathlib import Path
@@ -23,6 +24,8 @@ console = Console()
 EVENT_TICKER = "KXTNOTED-25DEC31"
 MIN_EDGE_PCT = 0.3
 MIN_SPREAD_CENTS = 3
+MAX_BID = 90
+MIN_PROB_TO_BID = 5.0
 
 
 def load_model_probs(csv_path: str = None, yield_10y: float = 4.20) -> dict:
@@ -75,6 +78,23 @@ async def fetch_kalshi_markets() -> dict:
         return {b.label: (b.prob, b.cum_market) for b in event.get_buckets()}
 
 
+def calculate_quote(prob: float) -> tuple[int, int]:
+    fair = prob
+    spread = max(fair * MIN_EDGE_PCT, MIN_SPREAD_CENTS)
+    bid = int(fair - spread)
+    ask = math.ceil(fair + spread)
+    
+    bid = max(1, min(bid, MAX_BID))
+    ask = max(bid + 1, min(99, ask))
+    
+    if prob < MIN_PROB_TO_BID or bid >= fair:
+        bid = 0
+    if ask <= fair:
+        ask = 0
+    
+    return bid, ask
+
+
 def display_comparison(model_probs: dict, kalshi_data: dict):
     table = Table(title=f"Model vs Kalshi: {EVENT_TICKER}", show_header=True, header_style="bold cyan")
     table.add_column("Bucket", justify="left")
@@ -89,21 +109,20 @@ def display_comparison(model_probs: dict, kalshi_data: dict):
         model_prob = model_probs.get(label, 0)
         kalshi_info = kalshi_data.get(label)
         
-        fair = int(model_prob)
-        half_spread = max(MIN_SPREAD_CENTS, int(fair * MIN_EDGE_PCT))
-        bid = max(1, fair - half_spread)
-        ask = min(99, fair + half_spread)
+        bid, ask = calculate_quote(model_prob)
+        bid_str = str(bid) if bid > 0 else "-"
+        ask_str = str(ask) if ask > 0 else "-"
         
         if kalshi_info:
             _, market = kalshi_info
             k_bid = market.yes_bid or 0
             k_ask = market.yes_ask or 0
             table.add_row(
-                label, f"{model_prob:.1f}%", str(fair), str(bid), str(ask),
+                label, f"{model_prob:.1f}%", f"{int(model_prob)}", bid_str, ask_str,
                 str(k_bid) if k_bid else "-", str(k_ask) if k_ask else "-"
             )
         else:
-            table.add_row(label, f"{model_prob:.1f}%", str(fair), str(bid), str(ask), "-", "-")
+            table.add_row(label, f"{model_prob:.1f}%", f"{int(model_prob)}", bid_str, ask_str, "-", "-")
     
     console.print(table)
 
