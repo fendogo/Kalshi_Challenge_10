@@ -5,12 +5,12 @@
 ```bash
 pip install -r requirements.txt
 ```
-There are two ways to run the model: snapshot.py which runs the model on barchart.com CSV data,
-and run_stream.py for streaming the data from Schwab.
+## There are two ways to run the model: snapshot.py which runs the model on barchart.com CSV data,
+## and run_stream.py for streaming the data from Schwab.
 
-snapshot.py requires no credentials and is given for the purpose of 
-reproducibility. The final predictions are based on the free public
-barchart.com data.
+## snapshot.py requires no credentials and is given for the purpose of 
+## reproducibility. The final predictions are based on the free public
+## barchart.com data.
 
 CSV source 
 (https://www.barchart.com/futures/quotes/TNH26/options/BV2Z25?futuresOptionsView=merged)
