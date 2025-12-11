@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
+import base64
 import csv
 import math
+import os
 import sys
+import time
 import asyncio
+import re
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from dataclasses import dataclass, field
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
+import aiohttp
+from dotenv import load_dotenv
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from rich.console import Console
 from rich.table import Table
 
-from kalshi.client import KalshiClient
-from kalshi.monitor import KalshiWebSocket
 from src.config import Config, MarketState, YIELD_BUCKETS
 from src.utils.opt_chain import generate_symbol_map, calculate_underlying_from_parity
 from src.table_display import run_model
 
+load_dotenv()
 console = Console()
 
 EVENT_TICKER = "KXTNOTED-25DEC12"
@@ -25,6 +31,101 @@ MIN_EDGE_PCT = 0.3
 MIN_SPREAD_CENTS = 3
 MAX_BID = 90
 MIN_PROB_TO_BID = 5.0
+
+API_KEY = os.getenv("KALSHI_API_KEY", "")
+PRIVATE_KEY = os.getenv("KALSHI_PRIVATE_KEY", "")
+REST_BASE = "https://api.elections.kalshi.com/trade-api/v2"
+
+
+def sign_request(private_key_str: str, timestamp: str, method: str, path: str) -> str:
+    message = f"{timestamp}{method}{path}".encode('utf-8')
+    private_key = serialization.load_pem_private_key(private_key_str.encode(), password=None)
+    signature = private_key.sign(
+        message,
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256()
+    )
+    return base64.b64encode(signature).decode('utf-8')
+
+
+def create_headers(method: str, path: str) -> dict:
+    timestamp = str(int(time.time() * 1000))
+    return {
+        "Content-Type": "application/json",
+        "KALSHI-ACCESS-KEY": API_KEY,
+        "KALSHI-ACCESS-SIGNATURE": sign_request(PRIVATE_KEY, timestamp, method, path),
+        "KALSHI-ACCESS-TIMESTAMP": timestamp,
+    }
+
+
+@dataclass
+class Market:
+    ticker: str
+    yes_bid: int = 0
+    yes_ask: int = 0
+
+
+def parse_ticker_value(ticker: str) -> tuple[str, float, str]:
+    suffix = ticker.split("-")[-1] if "-" in ticker else ticker
+    match = re.match(r'^([BT])([\d.]+)$', suffix)
+    if match:
+        prefix, value = match.groups()
+        v = float(value)
+        if prefix == "B":
+            return f"< {value}%", v, "below"
+        return f"{value}%", v, "tail"
+    return suffix, 0, "unknown"
+
+
+async def fetch_kalshi_markets() -> dict:
+    async with aiohttp.ClientSession() as session:
+        path = f"/trade-api/v2/markets?event_ticker={EVENT_TICKER}&limit=200"
+        headers = create_headers("GET", "/trade-api/v2/markets")
+        async with session.get(f"{REST_BASE}/markets?event_ticker={EVENT_TICKER}&limit=200", headers=headers) as resp:
+            data = await resp.json()
+        
+        markets = {}
+        for m in data.get("markets", []):
+            ticker = m.get("ticker", "")
+            markets[ticker] = Market(ticker=ticker)
+        
+        for ticker in markets:
+            path = f"/trade-api/v2/markets/{ticker}/orderbook"
+            headers = create_headers("GET", path)
+            async with session.get(f"{REST_BASE}/markets/{ticker}/orderbook", headers=headers) as resp:
+                ob = await resp.json()
+            
+            orderbook = ob.get("orderbook", {})
+            yes_bids = orderbook.get("yes", [])
+            no_bids = orderbook.get("no", [])
+            
+            if yes_bids:
+                markets[ticker].yes_bid = yes_bids[0][0]
+            if no_bids:
+                markets[ticker].yes_ask = 100 - no_bids[0][0]
+        
+        buckets = {}
+        for ticker, market in markets.items():
+            label, val, mtype = parse_ticker_value(ticker)
+            if market.yes_bid and market.yes_ask:
+                mid = (market.yes_bid + market.yes_ask) / 2
+                buckets[val] = (mid, market, mtype)
+        
+        result = {}
+        sorted_vals = sorted(buckets.keys())
+        for i, val in enumerate(sorted_vals):
+            mid, market, mtype = buckets[val]
+            if mtype == "tail":
+                if val == min(sorted_vals):
+                    label = f"{val - 0.01:.2f}% or below".replace(".00%", "%")
+                else:
+                    label = f"{val + 0.01:.2f}% or above".replace(".00%", "%")
+                result[label] = (mid, market)
+            elif mtype == "below":
+                label = f"{val - 0.01:.2f}% to {val + 0.01:.2f}%".replace(".00%", "%")
+                result[label] = (mid, market)
+        
+        return result
 
 
 def load_model_probs(csv_path: str = None, yield_10y: float = 4.20) -> dict:
@@ -65,18 +166,6 @@ def load_model_probs(csv_path: str = None, yield_10y: float = 4.20) -> dict:
     return result.bucket_probs if result else {}
 
 
-async def fetch_kalshi_markets() -> dict:
-    async with KalshiClient() as client:
-        tickers = await client.load_markets(event_ticker=EVENT_TICKER)
-        for ticker in tickers:
-            ob = await client.rest.get_orderbook(ticker)
-            KalshiWebSocket.update_orderbook_from_data(client.state, ticker, ob.get("orderbook", {}))
-        event = client.state.events.get(EVENT_TICKER)
-        if not event:
-            return {}
-        return {b.label: (b.prob, b.cum_market) for b in event.get_buckets()}
-
-
 def calculate_quote(prob: float) -> tuple[int, int]:
     fair = prob
     spread = max(fair * MIN_EDGE_PCT, MIN_SPREAD_CENTS)
@@ -95,9 +184,7 @@ def calculate_quote(prob: float) -> tuple[int, int]:
 
 
 def display_comparison(model_probs: dict, kalshi_data: dict):
-    
     table = Table(title=f"Model vs Kalshi: {EVENT_TICKER}", show_header=True, header_style="bold cyan")
-    
     table.add_column("Bucket", justify="left")
     table.add_column("Model", justify="right", style="yellow")
     table.add_column("Fair", justify="right")
@@ -129,7 +216,6 @@ def display_comparison(model_probs: dict, kalshi_data: dict):
 
 
 async def main():
-    
     csv_path = sys.argv[1] if len(sys.argv) > 1 else None
     yield_10y = float(sys.argv[2]) if len(sys.argv) > 2 else 4.20
     

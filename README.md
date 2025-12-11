@@ -34,6 +34,8 @@ python kalshi_compare.py
 - Fair value, suggested bid/ask
 - Current Kalshi bid/ask for comparison
 
-Uses Kalshi REST API. Requires env vars (via `.env` in parent directory):
-- `KALSHI_API_KEY`
-- `KALSHI_PRIVATE_KEY`
+Requires `.env` with:
+```
+KALSHI_API_KEY=your_key
+KALSHI_PRIVATE_KEY=your_private_key
+```
